@@ -8,6 +8,7 @@ import loadingScene from "./scenes/loading.js";
 import gameScene from "./scenes/game.js";
 import fightScene from "./scenes/fight.js";
 import runResultScene from "./scenes/runResult.js";
+import settingsScene from "./scenes/settings.js";
 
 const k = kaboom({
   width: 1280,
@@ -55,6 +56,7 @@ async function init() {
   gameScene(k);
   fightScene(k);
   runResultScene(k);
+  settingsScene(k);
 
   // Start
   k.go("start");

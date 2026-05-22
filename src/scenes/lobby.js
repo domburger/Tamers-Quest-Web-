@@ -34,7 +34,7 @@ export default function lobbyScene(k) {
     const buttons = [
       { label: "Start Run", color: [60, 140, 90], action: () => k.go("loading", { characterId }) },
       { label: "Inventory", color: [60, 90, 140], action: () => k.go("inventory", { characterId }) },
-      { label: "Settings", color: [90, 80, 120], action: () => {} },
+      { label: "Settings", color: [90, 80, 120], action: () => k.go("settings", { characterId }) },
       { label: "Back", color: [100, 60, 60], action: () => k.go("characterSelect") },
     ];
 

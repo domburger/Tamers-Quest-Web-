@@ -9,11 +9,7 @@ export default function inventoryScene(k) {
       return;
     }
 
-    k.add([
-      k.rect(k.width(), k.height()),
-      k.pos(0, 0),
-      k.color(12, 12, 22),
-    ]);
+    k.add([k.rect(k.width(), k.height()), k.pos(0, 0), k.color(12, 12, 22)]);
 
     k.add([
       k.text("Inventory", { size: 38, font: "gameFont" }),
@@ -22,40 +18,272 @@ export default function inventoryScene(k) {
       k.color(255, 255, 255),
     ]);
 
-    // Active team section
-    k.add([
-      k.text("Active Team", { size: 22, font: "gameFont" }),
-      k.pos(k.width() / 4, 100),
-      k.anchor("center"),
-      k.color(100, 200, 140),
-    ]);
+    let selected = null; // { section: "active"|"vault", index: number }
+    let vaultScroll = 0;
+    const VAULT_VISIBLE = 5;
+    const SLOT_H = 80;
+    const SLOT_GAP = 8;
+    const SLOT_W = 280;
 
-    const active = character.activeMonsters || [];
-    active.forEach((mon, i) => {
-      renderMonsterSlot(k, mon, k.width() / 4 - 140, 140 + i * 90, i, "active");
-    });
+    const activeX = k.width() / 4 - SLOT_W / 2;
+    const vaultX = (k.width() * 3) / 4 - SLOT_W / 2;
+    const listTop = 140;
 
-    // Vault section
-    k.add([
-      k.text("Vault", { size: 22, font: "gameFont" }),
-      k.pos((k.width() * 3) / 4, 100),
-      k.anchor("center"),
-      k.color(100, 140, 200),
-    ]);
+    function render() {
+      k.destroyAll("invUI");
 
-    const vault = character.vaultMonsters || [];
-    vault.forEach((mon, i) => {
-      renderMonsterSlot(k, mon, (k.width() * 3) / 4 - 140, 140 + i * 90, i, "vault");
-    });
+      const active = character.activeMonsters || [];
+      const vault = character.vaultMonsters || [];
 
-    if (vault.length === 0) {
+      // Section headers
       k.add([
-        k.text("Vault is empty", { size: 16, font: "gameFont" }),
-        k.pos((k.width() * 3) / 4, 180),
+        k.text("Active Team", { size: 22, font: "gameFont" }),
+        k.pos(k.width() / 4, 100),
         k.anchor("center"),
-        k.color(100, 100, 120),
+        k.color(100, 200, 140),
+        "invUI",
+      ]);
+
+      k.add([
+        k.text("Vault", { size: 22, font: "gameFont" }),
+        k.pos((k.width() * 3) / 4, 100),
+        k.anchor("center"),
+        k.color(100, 140, 200),
+        "invUI",
+      ]);
+
+      // Active team slots (always 4 — empty slots shown)
+      for (let i = 0; i < 4; i++) {
+        const y = listTop + i * (SLOT_H + SLOT_GAP);
+        const mon = active[i];
+        const isSelected = selected && selected.section === "active" && selected.index === i;
+        renderSlot(mon, activeX, y, "active", i, isSelected);
+      }
+
+      // Vault slots
+      if (vault.length === 0) {
+        k.add([
+          k.text("Vault is empty", { size: 16, font: "gameFont" }),
+          k.pos((k.width() * 3) / 4, listTop + 30),
+          k.anchor("center"),
+          k.color(100, 100, 120),
+          "invUI",
+        ]);
+      } else {
+        const visibleVault = vault.slice(vaultScroll, vaultScroll + VAULT_VISIBLE);
+        visibleVault.forEach((mon, i) => {
+          const globalIdx = vaultScroll + i;
+          const y = listTop + i * (SLOT_H + SLOT_GAP);
+          const isSelected = selected && selected.section === "vault" && selected.index === globalIdx;
+          renderSlot(mon, vaultX, y, "vault", globalIdx, isSelected);
+        });
+
+        // Scroll buttons
+        if (vaultScroll > 0) {
+          const upBtn = k.add([
+            k.rect(SLOT_W, 28, { radius: 4 }),
+            k.pos(vaultX, listTop - 32),
+            k.color(40, 40, 60),
+            k.area(),
+            "invUI",
+          ]);
+          k.add([
+            k.text("^ Scroll Up", { size: 13, font: "gameFont" }),
+            k.pos(vaultX + SLOT_W / 2, listTop - 18),
+            k.anchor("center"),
+            k.color(160, 160, 180),
+            "invUI",
+          ]);
+          upBtn.onClick(() => { vaultScroll = Math.max(0, vaultScroll - 1); render(); });
+        }
+
+        if (vaultScroll + VAULT_VISIBLE < vault.length) {
+          const downY = listTop + VAULT_VISIBLE * (SLOT_H + SLOT_GAP);
+          const downBtn = k.add([
+            k.rect(SLOT_W, 28, { radius: 4 }),
+            k.pos(vaultX, downY),
+            k.color(40, 40, 60),
+            k.area(),
+            "invUI",
+          ]);
+          k.add([
+            k.text("v Scroll Down", { size: 13, font: "gameFont" }),
+            k.pos(vaultX + SLOT_W / 2, downY + 14),
+            k.anchor("center"),
+            k.color(160, 160, 180),
+            "invUI",
+          ]);
+          downBtn.onClick(() => { vaultScroll++; render(); });
+        }
+
+        // Vault count
+        k.add([
+          k.text(`${vault.length} / 100`, { size: 13, font: "gameFont" }),
+          k.pos((k.width() * 3) / 4, 118),
+          k.anchor("center"),
+          k.color(80, 80, 100),
+          "invUI",
+        ]);
+      }
+
+      // Hint text
+      const hintText = selected
+        ? "Click another slot to swap, or click again to deselect."
+        : "Click a monster to select it for swapping.";
+      k.add([
+        k.text(hintText, { size: 14, font: "gameFont" }),
+        k.pos(k.width() / 2, k.height() - 40),
+        k.anchor("center"),
+        k.color(120, 120, 150),
+        "invUI",
       ]);
     }
+
+    function renderSlot(mon, x, y, section, index, isSelected) {
+      const outlineColor = isSelected
+        ? k.Color.fromHex("#ffcc00")
+        : k.Color.fromHex("#444444");
+      const bgColor = isSelected ? k.rgb(50, 45, 30) : k.rgb(30, 30, 50);
+
+      const slot = k.add([
+        k.rect(SLOT_W, SLOT_H, { radius: 8 }),
+        k.pos(x, y),
+        k.color(bgColor),
+        k.outline(isSelected ? 2 : 1, outlineColor),
+        k.area(),
+        "invUI",
+      ]);
+
+      if (!mon) {
+        k.add([
+          k.text("( empty )", { size: 14, font: "gameFont" }),
+          k.pos(x + SLOT_W / 2, y + SLOT_H / 2),
+          k.anchor("center"),
+          k.color(60, 60, 80),
+          "invUI",
+        ]);
+        slot.onClick(() => handleSlotClick(section, index));
+        return;
+      }
+
+      const monType = getMonsterType(mon.typeName);
+      const stats = monType ? getMonsterStats(monType, mon.level) : null;
+
+      const spriteName = mon.typeName.toLowerCase().replace(/\s+/g, "_");
+      try {
+        k.add([
+          k.sprite(spriteName),
+          k.pos(x + 40, y + 40),
+          k.anchor("center"),
+          k.scale(0.3),
+          "invUI",
+        ]);
+      } catch {
+        k.add([
+          k.rect(48, 48, { radius: 4 }),
+          k.pos(x + 16, y + 16),
+          k.color(50, 50, 70),
+          "invUI",
+        ]);
+      }
+
+      k.add([
+        k.text(mon.name || mon.typeName, { size: 16, font: "gameFont" }),
+        k.pos(x + 75, y + 12),
+        k.color(220, 220, 230),
+        "invUI",
+      ]);
+
+      const element = monType ? monType.element : "?";
+      k.add([
+        k.text(`Lv.${mon.level}  ${element}`, { size: 13, font: "gameFont" }),
+        k.pos(x + 75, y + 34),
+        k.color(150, 150, 170),
+        "invUI",
+      ]);
+
+      if (stats) {
+        const hpColor = mon.currentHealth <= 0
+          ? k.rgb(180, 60, 60)
+          : k.rgb(120, 120, 140);
+        k.add([
+          k.text(
+            `HP:${mon.currentHealth}/${stats.health} STR:${stats.strength} DEF:${stats.defense}`,
+            { size: 11, font: "gameFont" }
+          ),
+          k.pos(x + 75, y + 56),
+          k.color(hpColor),
+          "invUI",
+        ]);
+      }
+
+      slot.onClick(() => handleSlotClick(section, index));
+    }
+
+    function handleSlotClick(section, index) {
+      if (!selected) {
+        const list = section === "active" ? character.activeMonsters : character.vaultMonsters;
+        if (!list || !list[index]) return;
+        selected = { section, index };
+        render();
+        return;
+      }
+
+      // Clicking the same slot — deselect
+      if (selected.section === section && selected.index === index) {
+        selected = null;
+        render();
+        return;
+      }
+
+      // Swap between two slots
+      const srcList = selected.section === "active" ? character.activeMonsters : character.vaultMonsters;
+      const dstList = section === "active" ? character.activeMonsters : character.vaultMonsters;
+      const srcIdx = selected.index;
+      const dstIdx = index;
+
+      if (selected.section === section) {
+        // Same section — swap positions
+        const temp = srcList[srcIdx];
+        srcList[srcIdx] = srcList[dstIdx];
+        srcList[dstIdx] = temp;
+      } else {
+        // Different sections — swap or move
+        const srcMon = srcList[srcIdx];
+        const dstMon = dstList[dstIdx];
+
+        if (dstMon) {
+          // Swap
+          srcList[srcIdx] = dstMon;
+          dstList[dstIdx] = srcMon;
+        } else if (section === "active" && selected.section === "vault") {
+          // Move vault → active empty slot
+          if (dstIdx < 4) {
+            if (!character.activeMonsters[dstIdx]) {
+              character.activeMonsters[dstIdx] = srcMon;
+              character.vaultMonsters.splice(srcIdx, 1);
+            }
+          }
+        } else if (section === "vault" && selected.section === "active") {
+          // Move active → vault
+          if (!character.vaultMonsters) character.vaultMonsters = [];
+          character.vaultMonsters.push(srcMon);
+          character.activeMonsters[srcIdx] = null;
+        }
+      }
+
+      // Clean up: remove nulls from active, ensure at least one monster
+      character.activeMonsters = character.activeMonsters.filter(Boolean);
+      if (character.activeMonsters.length === 0 && character.vaultMonsters?.length > 0) {
+        character.activeMonsters.push(character.vaultMonsters.shift());
+      }
+
+      saveCharacter(character);
+      selected = null;
+      render();
+    }
+
+    render();
 
     // Back button
     const backBtn = k.add([
@@ -70,56 +298,4 @@ export default function inventoryScene(k) {
       k.go("lobby", { characterId });
     });
   });
-}
-
-function renderMonsterSlot(k, mon, x, y, index, section) {
-  const monType = getMonsterType(mon.typeName);
-  const stats = monType ? getMonsterStats(monType, mon.level) : null;
-
-  k.add([
-    k.rect(280, 80, { radius: 8 }),
-    k.pos(x, y),
-    k.color(30, 30, 50),
-    k.outline(1, k.Color.fromHex("#444444")),
-  ]);
-
-  const spriteName = mon.typeName.toLowerCase().replace(/\s+/g, "_");
-  try {
-    k.add([
-      k.sprite(spriteName),
-      k.pos(x + 40, y + 40),
-      k.anchor("center"),
-      k.scale(0.3),
-    ]);
-  } catch {
-    k.add([
-      k.rect(48, 48, { radius: 4 }),
-      k.pos(x + 16, y + 16),
-      k.color(50, 50, 70),
-    ]);
-  }
-
-  k.add([
-    k.text(mon.name, { size: 16, font: "gameFont" }),
-    k.pos(x + 75, y + 14),
-    k.color(220, 220, 230),
-  ]);
-
-  const element = monType ? monType.element : "?";
-  k.add([
-    k.text(`Lv.${mon.level}  ${element}`, { size: 13, font: "gameFont" }),
-    k.pos(x + 75, y + 38),
-    k.color(150, 150, 170),
-  ]);
-
-  if (stats) {
-    k.add([
-      k.text(`HP:${stats.health} STR:${stats.strength} DEF:${stats.defense}`, {
-        size: 11,
-        font: "gameFont",
-      }),
-      k.pos(x + 75, y + 58),
-      k.color(120, 120, 140),
-    ]);
-  }
 }

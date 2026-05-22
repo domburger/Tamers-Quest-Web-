@@ -435,7 +435,7 @@ export default function fightScene(k) {
       makeBtn(label, cx, btnY + btnH, btnW, btnH, k.rgb(50, 100, 80), () => {
         saveCharacter(character);
         if (state === STATE.FIGHT_LOST) {
-          k.go("runResult", { characterId, result: "timeout" });
+          k.go("runResult", { characterId, result: "defeat" });
         } else {
           k.go("game", { characterId, mapData, resumePos: playerPos, resumeElapsed: elapsed, resumePortals: portals });
         }
