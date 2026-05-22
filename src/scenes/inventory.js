@@ -265,7 +265,13 @@ export default function inventoryScene(k) {
             }
           }
         } else if (section === "vault" && selected.section === "active") {
-          // Move active → vault
+          // Move active → vault (but keep at least 1 active)
+          const aliveActive = character.activeMonsters.filter((m, i) => m && i !== srcIdx);
+          if (aliveActive.length === 0) {
+            selected = null;
+            render();
+            return;
+          }
           if (!character.vaultMonsters) character.vaultMonsters = [];
           character.vaultMonsters.push(srcMon);
           character.activeMonsters[srcIdx] = null;

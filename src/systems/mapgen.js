@@ -1,4 +1,4 @@
-import { getGroundTiles, getMonsterTypes } from "../data.js";
+import { getGroundTiles, getMonsterTypes, getMonsterStats } from "../data.js";
 
 export const MAP_SIZE = 400;
 const WALKABLE_PERCENTAGE = 0.35;
@@ -382,14 +382,15 @@ function spawnMonsters(voidMap, tileMap) {
 
     const monType = allMonsterTypes[Math.floor(Math.random() * allMonsterTypes.length)];
     const level = 1 + Math.floor(Math.random() * 5);
+    const stats = getMonsterStats(monType, level);
     const monster = {
       id: Date.now() + monsters.length,
       typeName: monType.typeName,
       name: monType.typeName,
       level,
       xp: 0,
-      currentHealth: monType.baseHealth,
-      currentEnergy: monType.baseEnergy,
+      currentHealth: stats.health,
+      currentEnergy: stats.energy,
       status: null,
       tileX: x,
       tileY: y,

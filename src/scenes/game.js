@@ -299,7 +299,7 @@ export default function gameScene(k) {
 
       // Time's up
       if (elapsed >= RUN_DURATION) {
-        k.go("runResult", { characterId, result: "timeout" });
+        k.go("runResult", { characterId, result: "defeat" });
       }
     }
 

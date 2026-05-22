@@ -33,14 +33,15 @@ export default function runResultScene(k) {
       const starters = [];
       for (let i = 0; i < Math.min(4, shuffled.length); i++) {
         const mt = shuffled[i];
+        const stats = getMonsterStats(mt, 1);
         starters.push({
           id: Date.now() + i,
           typeName: mt.typeName,
           name: mt.typeName,
           level: 1,
           xp: 0,
-          currentHealth: mt.baseHealth,
-          currentEnergy: mt.baseEnergy,
+          currentHealth: stats.health,
+          currentEnergy: stats.energy,
           status: null,
         });
       }

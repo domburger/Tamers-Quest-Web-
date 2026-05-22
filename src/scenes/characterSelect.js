@@ -1,5 +1,5 @@
 import { getCharacters, createCharacter, deleteCharacter, saveCharacter } from "../storage.js";
-import { getMonsterTypes } from "../data.js";
+import { getMonsterTypes, getMonsterStats } from "../data.js";
 
 export default function characterSelectScene(k) {
   k.scene("characterSelect", () => {
@@ -211,14 +211,16 @@ export default function characterSelectScene(k) {
       const shuffled = [...allMonsters].sort(() => Math.random() - 0.5);
       const starters = [];
       for (let i = 0; i < Math.min(4, shuffled.length); i++) {
+        const mt = shuffled[i];
+        const stats = getMonsterStats(mt, 1);
         starters.push({
           id: Date.now() + i,
-          typeName: shuffled[i].typeName,
-          name: shuffled[i].typeName,
+          typeName: mt.typeName,
+          name: mt.typeName,
           level: 1,
           xp: 0,
-          currentHealth: shuffled[i].baseHealth,
-          currentEnergy: shuffled[i].baseEnergy,
+          currentHealth: stats.health,
+          currentEnergy: stats.energy,
           status: null,
         });
       }
