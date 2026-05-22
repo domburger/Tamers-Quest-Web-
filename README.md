@@ -16,7 +16,7 @@ npm run dev
 A procedurally generated dungeon crawler with monster taming and AI-mediated turn-based combat.
 
 - **103 unique monsters** across 6 elements (Fire, Water, Nature, Dark, Light, Neutral)
-- **Procedural dungeons** — 400x400 tile maps with Perlin noise, 10 random biomes per run
+- **Procedural dungeons** — 400x400 tile maps with DLA cave carving, Voronoi biomes, color-profile tile matching
 - **AI-mediated turn-based combat** — turns evaluated by GPT-4o (damage, accuracy, crits, elemental matchups, status effects)
 - **Taming mechanic** — catch weakened monsters to grow your roster (team of 4)
 - **Time pressure** — 10-minute runs, shrinking safe zone, portals spawn after 5 minutes
@@ -37,8 +37,8 @@ A procedurally generated dungeon crawler with monster taming and AI-mediated tur
 - Scene manager using Kaboom's `scene()` / `go()` system
 
 ### Phase 3: Dungeon Generation & Exploration
-- Port Perlin noise map generation to JS (simplex-noise library)
-- 3-stage pipeline: void map → biome assignment → floor tile placement with adjacency scoring
+- DLA (Diffusion-Limited Aggregation) cave carving with path marking, smoothing, tunnel widening
+- 3-stage pipeline: void map (DLA) → biome assignment (Voronoi) → floor tile placement with color-profile scoring
 - Top-down player movement (WASD) with tile collision
 - Camera following player, distance culling (only render nearby tiles)
 - Monster spawning on tiles (0.5% rate)

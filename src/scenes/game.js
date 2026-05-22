@@ -1,4 +1,4 @@
-import { findSpawnPoint, MAP_SIZE } from "../systems/mapgen.js";
+import { findSpawnPoint } from "../systems/mapgen.js";
 import { getCharacter } from "../storage.js";
 
 const TILE_SIZE = 128;

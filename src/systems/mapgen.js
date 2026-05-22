@@ -1,14 +1,12 @@
-import { PerlinNoise } from "./perlinNoise.js";
 import { getGroundTiles, getMonsterTypes } from "../data.js";
 
-const MAP_SIZE = 200;
+export const MAP_SIZE = 400;
 const WALKABLE_PERCENTAGE = 0.35;
 const SHORT_WALK_STEPS = 500;
 const MAX_DLA_STEPS = 500;
 const NUM_BIOMES = 10;
-const SMOOTHING_PASSES = 5;
-const MONSTER_DENSITY = 0.001;
-const TILE_POOL_SIZE = 500;
+const SMOOTHING_PASSES = 3;
+const MONSTER_DENSITY = 0.005;
 
 const BIOME_DEFS = [
   { name: "Forest", rarity: 30, size: 80 },
@@ -25,6 +23,18 @@ const BIOME_DEFS = [
   { name: "Crystal", rarity: 60, size: 50 },
 ];
 
+// Rotation index map matching Java's ROT_MAP
+// Indices: 0=top, 1=bottom, 2=left, 3=right
+// ROT_MAP[r] = [topIdx, bottomIdx, leftIdx, rightIdx]
+const ROT_MAP = [
+  [0, 1, 2, 3], // rot 0: no rotation
+  [2, 3, 1, 0], // rot 1: top←left, bottom←right, left←bottom, right←top
+  [1, 0, 3, 2], // rot 2: top←bottom, bottom←top, left←right, right←left
+  [3, 2, 0, 1], // rot 3: top←right, bottom←left, left←top, right←bottom
+];
+
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
 export async function generateMap(onProgress) {
   const voidMap = new Array(MAP_SIZE);
   const biomeMap = new Array(MAP_SIZE);
@@ -36,19 +46,18 @@ export async function generateMap(onProgress) {
     tileMap[x] = new Array(MAP_SIZE).fill(null);
   }
 
-  onProgress?.(0.05, "Generating walkable area...");
-  generateDLA(voidMap);
-  await yieldFrame();
+  onProgress?.(0.05, "Carving terrain...");
+  await generateDLA(voidMap, onProgress);
 
-  onProgress?.(0.30, "Assigning biomes...");
+  onProgress?.(0.55, "Assigning biomes...");
   generateBiomesVoronoi(biomeMap);
 
-  onProgress?.(0.40, "Selecting tiles...");
+  onProgress?.(0.60, "Selecting tiles...");
   const allTiles = getGroundTiles();
-  const biomePools = buildBiomePools(allTiles);
-  await fillMapWithTiles(voidMap, biomeMap, tileMap, biomePools, onProgress);
+  const tilesByBiome = buildBiomePools(allTiles);
+  await fillMapWithTiles(voidMap, biomeMap, tileMap, allTiles, tilesByBiome, onProgress);
 
-  onProgress?.(0.90, "Spawning monsters...");
+  onProgress?.(0.95, "Spawning monsters...");
   const monsters = spawnMonsters(voidMap, tileMap);
 
   onProgress?.(1.0, "Done!");
@@ -60,9 +69,10 @@ function yieldFrame() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function generateDLA(voidMap) {
+async function generateDLA(voidMap, onProgress) {
   const requiredTiles = Math.floor(MAP_SIZE * MAP_SIZE * WALKABLE_PERCENTAGE);
 
+  // Initial random walk near center
   const startX = Math.floor(MAP_SIZE / 4 + Math.random() * (MAP_SIZE / 4));
   const startY = Math.floor(MAP_SIZE / 4 + Math.random() * (MAP_SIZE / 4));
   let x = startX;
@@ -70,21 +80,30 @@ function generateDLA(voidMap) {
 
   for (let i = 0; i < SHORT_WALK_STEPS; i++) {
     const dir = Math.floor(Math.random() * 4);
-    if (dir === 0 && x < MAP_SIZE - 1) x++;
-    else if (dir === 1 && x > 0) x--;
-    else if (dir === 2 && y < MAP_SIZE - 1) y++;
-    else if (dir === 3 && y > 0) y--;
+    if (dir === 0) x = Math.min(x + 1, MAP_SIZE - 1);
+    else if (dir === 1) x = Math.max(x - 1, 0);
+    else if (dir === 2) y = Math.min(y + 1, MAP_SIZE - 1);
+    else y = Math.max(y - 1, 0);
     voidMap[x][y] = true;
   }
 
   let walkableCount = countWalkable(voidMap);
+  let yieldCounter = 0;
 
+  // DLA loop: each walk marks the entire path back to start
   while (walkableCount < requiredTiles) {
     const sx = Math.floor(Math.random() * MAP_SIZE);
     const sy = Math.floor(Math.random() * MAP_SIZE);
     walkableCount += dlaWalk(voidMap, sx, sy);
+
+    yieldCounter++;
+    if (yieldCounter % 500 === 0) {
+      onProgress?.(0.05 + 0.45 * Math.min(1, walkableCount / requiredTiles), "Carving terrain...");
+      await yieldFrame();
+    }
   }
 
+  // Smooth 3 times (matching Java)
   for (let pass = 0; pass < SMOOTHING_PASSES; pass++) {
     smoothMap(voidMap);
     widenNarrowTunnels(voidMap);
@@ -92,32 +111,51 @@ function generateDLA(voidMap) {
 }
 
 function dlaWalk(voidMap, startX, startY) {
+  const path = [];
   let x = startX, y = startY;
-  for (let step = 0; step < MAX_DLA_STEPS; step++) {
-    if (x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE) return 0;
 
-    if (hasWalkableNeighbor(voidMap, x, y)) {
-      if (!voidMap[x][y]) {
-        voidMap[x][y] = true;
-        return 1;
+  for (let step = 0; step < MAX_DLA_STEPS; step++) {
+    path.push(x, y);
+
+    // Check all 4 neighbors (with clamping, matching Java's MathUtils.clamp)
+    let foundNeighbor = false;
+    for (let d = 0; d < 4; d++) {
+      const nx = Math.max(0, Math.min(MAP_SIZE - 1, x + DIRS[d][0]));
+      const ny = Math.max(0, Math.min(MAP_SIZE - 1, y + DIRS[d][1]));
+      if (voidMap[nx][ny]) {
+        foundNeighbor = true;
+        break;
       }
-      return 0;
     }
 
-    const dir = Math.floor(Math.random() * 4);
-    if (dir === 0) x++;
-    else if (dir === 1) x--;
-    else if (dir === 2) y++;
-    else y--;
+    if (foundNeighbor) {
+      // Mark ALL positions along the walk path
+      let count = 0;
+      for (let i = 0; i < path.length; i += 2) {
+        const px = path[i], py = path[i + 1];
+        if (!voidMap[px][py]) {
+          voidMap[px][py] = true;
+          count++;
+        }
+      }
+      return count;
+    }
+
+    // Random walk with clamping
+    const dir = DIRS[Math.floor(Math.random() * 4)];
+    x = Math.max(0, Math.min(MAP_SIZE - 1, x + dir[0]));
+    y = Math.max(0, Math.min(MAP_SIZE - 1, y + dir[1]));
   }
+
   return 0;
 }
 
 function hasWalkableNeighbor(voidMap, x, y) {
-  if (x > 0 && voidMap[x - 1][y]) return true;
-  if (x < MAP_SIZE - 1 && voidMap[x + 1][y]) return true;
-  if (y > 0 && voidMap[x][y - 1]) return true;
-  if (y < MAP_SIZE - 1 && voidMap[x][y + 1]) return true;
+  for (let d = 0; d < 4; d++) {
+    const nx = Math.max(0, Math.min(MAP_SIZE - 1, x + DIRS[d][0]));
+    const ny = Math.max(0, Math.min(MAP_SIZE - 1, y + DIRS[d][1]));
+    if (voidMap[nx][ny]) return true;
+  }
   return false;
 }
 
@@ -129,46 +167,41 @@ function countWalkable(voidMap) {
   return count;
 }
 
+// Apply in-place to match Java (modifications during iteration affect subsequent checks)
 function smoothMap(voidMap) {
-  const toFill = [];
-  for (let x = 1; x < MAP_SIZE - 1; x++) {
-    for (let y = 1; y < MAP_SIZE - 1; y++) {
+  for (let x = 0; x < MAP_SIZE; x++) {
+    for (let y = 0; y < MAP_SIZE; y++) {
       if (voidMap[x][y]) continue;
       let neighbors = 0;
-      if (voidMap[x - 1][y]) neighbors++;
-      if (voidMap[x + 1][y]) neighbors++;
-      if (voidMap[x][y - 1]) neighbors++;
-      if (voidMap[x][y + 1]) neighbors++;
-      if (voidMap[x - 1][y - 1]) neighbors++;
-      if (voidMap[x + 1][y - 1]) neighbors++;
-      if (voidMap[x - 1][y + 1]) neighbors++;
-      if (voidMap[x + 1][y + 1]) neighbors++;
-      if (neighbors > 4) toFill.push([x, y]);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && nx < MAP_SIZE && ny >= 0 && ny < MAP_SIZE && voidMap[nx][ny]) {
+            neighbors++;
+          }
+        }
+      }
+      if (neighbors > 4) voidMap[x][y] = true;
     }
   }
-  for (const [x, y] of toFill) voidMap[x][y] = true;
 }
 
+// Apply in-place to match Java
 function widenNarrowTunnels(voidMap) {
-  const toFill = [];
   for (let x = 1; x < MAP_SIZE - 1; x++) {
     for (let y = 1; y < MAP_SIZE - 1; y++) {
       if (!voidMap[x][y]) continue;
-      // Horizontal tunnel: walkable left+right, void above+below
-      if (voidMap[x - 1][y] && voidMap[x + 1][y] && !voidMap[x][y - 1] && !voidMap[x][y + 1]) {
-        toFill.push([x, y - 1]);
-        toFill.push([x, y + 1]);
+      // Vertical passage (walkable up/down, void left/right) → widen horizontal
+      if (!voidMap[x - 1][y] && !voidMap[x + 1][y] && voidMap[x][y - 1] && voidMap[x][y + 1]) {
+        voidMap[x - 1][y] = true;
+        voidMap[x + 1][y] = true;
       }
-      // Vertical tunnel: walkable above+below, void left+right
-      if (voidMap[x][y - 1] && voidMap[x][y + 1] && !voidMap[x - 1][y] && !voidMap[x + 1][y]) {
-        toFill.push([x - 1, y]);
-        toFill.push([x + 1, y]);
+      // Horizontal passage (walkable left/right, void up/down) → widen vertical
+      if (!voidMap[x][y - 1] && !voidMap[x][y + 1] && voidMap[x - 1][y] && voidMap[x + 1][y]) {
+        voidMap[x][y - 1] = true;
+        voidMap[x][y + 1] = true;
       }
-    }
-  }
-  for (const [x, y] of toFill) {
-    if (x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE) {
-      voidMap[x][y] = true;
     }
   }
 }
@@ -203,30 +236,15 @@ function generateBiomesVoronoi(biomeMap) {
 
 function buildBiomePools(allTiles) {
   const pools = {};
-  const all = [];
   for (const tile of allTiles) {
     const b = tile.biome || "unknown";
     if (!pools[b]) pools[b] = [];
     pools[b].push(tile);
-    all.push(tile);
   }
-  pools._all = all;
   return pools;
 }
 
-function getCandidateTiles(biomePools, biomeName) {
-  const matched = biomePools[biomeName] || [];
-  // Use all biome-matched tiles + up to 10 random from other biomes
-  const others = biomePools._all;
-  const extras = [];
-  for (let i = 0; i < 10 && i < others.length; i++) {
-    const t = others[Math.floor(Math.random() * others.length)];
-    if (t.biome !== biomeName) extras.push(t);
-  }
-  return matched.length > 0 ? [...matched, ...extras] : others.slice(0, 30);
-}
-
-async function fillMapWithTiles(voidMap, biomeMap, tileMap, biomePools, onProgress) {
+async function fillMapWithTiles(voidMap, biomeMap, tileMap, allTiles, tilesByBiome, onProgress) {
   let filled = 0;
   let total = 0;
   for (let x = 0; x < MAP_SIZE; x++)
@@ -238,19 +256,68 @@ async function fillMapWithTiles(voidMap, biomeMap, tileMap, biomePools, onProgre
       if (!voidMap[x][y]) continue;
 
       const biomeName = biomeMap[x][y]?.name || "";
-      const candidates = getCandidateTiles(biomePools, biomeName);
+      const biomePool = tilesByBiome[biomeName];
+      const biomeMatched = biomePool && biomePool.length > 0;
+      const candidates = biomeMatched ? biomePool : allTiles;
+
+      // Pre-compute rotated neighbor profiles (only left and top are filled in raster order)
+      const leftN = x > 0 ? tileMap[x - 1][y] : null;
+      const rightN = x < MAP_SIZE - 1 ? tileMap[x + 1][y] : null;
+      // y-1 = above on screen (Kaboom y↓), current tile's TOP faces neighbor's BOTTOM
+      const aboveN = y > 0 ? tileMap[x][y - 1] : null;
+      // y+1 = below on screen, current tile's BOTTOM faces neighbor's TOP
+      const belowN = y < MAP_SIZE - 1 ? tileMap[x][y + 1] : null;
+
+      // Pre-extract rotated neighbor side values
+      const leftRP = leftN ? getRotatedSides(leftN) : null;
+      const rightRP = rightN ? getRotatedSides(rightN) : null;
+      const aboveRP = aboveN ? getRotatedSides(aboveN) : null;
+      const belowRP = belowN ? getRotatedSides(belowN) : null;
 
       let bestTile = null;
       let bestScore = -Infinity;
       let bestRotation = 0;
 
       for (const tile of candidates) {
-        for (let rot = 0; rot < 4; rot++) {
-          const score = calculateTileScore(x, y, tile, rot, biomeMap, tileMap);
+        // Pre-extract side colors: [top, bottom, left, right]
+        const sR = [tile.colorProfile_top_r, tile.colorProfile_bottom_r, tile.colorProfile_left_r, tile.colorProfile_right_r];
+        const sG = [tile.colorProfile_top_g, tile.colorProfile_bottom_g, tile.colorProfile_left_g, tile.colorProfile_right_g];
+        const sB = [tile.colorProfile_top_b, tile.colorProfile_bottom_b, tile.colorProfile_left_b, tile.colorProfile_right_b];
+        const fR = tile.colorProfile_full_r, fG = tile.colorProfile_full_g, fB = tile.colorProfile_full_b;
+
+        // Random factor computed once per tile (same for all rotations, matching Java)
+        const baseScore = (biomeMatched ? 50 : 0) + Math.random() * 16;
+
+        for (let r = 0; r < 4; r++) {
+          let score = baseScore;
+          const rm = ROT_MAP[r];
+          // rm[2] = left side index after rotation, rm[3] = right, rm[0] = top, rm[1] = bottom
+
+          // Left neighbor: tile's left side vs neighbor's right side
+          if (leftRP) {
+            score += compareSideFast(sR[rm[2]], sG[rm[2]], sB[rm[2]], leftRP.rR, leftRP.rG, leftRP.rB);
+            score += compareFullFast(fR, fG, fB, leftRP.fR, leftRP.fG, leftRP.fB);
+          }
+          // Right neighbor: tile's right side vs neighbor's left side
+          if (rightRP) {
+            score += compareSideFast(sR[rm[3]], sG[rm[3]], sB[rm[3]], rightRP.lR, rightRP.lG, rightRP.lB);
+            score += compareFullFast(fR, fG, fB, rightRP.fR, rightRP.fG, rightRP.fB);
+          }
+          // Above neighbor (y-1): tile's TOP side vs neighbor's BOTTOM side
+          if (aboveRP) {
+            score += compareSideFast(sR[rm[0]], sG[rm[0]], sB[rm[0]], aboveRP.bR, aboveRP.bG, aboveRP.bB);
+            score += compareFullFast(fR, fG, fB, aboveRP.fR, aboveRP.fG, aboveRP.fB);
+          }
+          // Below neighbor (y+1): tile's BOTTOM side vs neighbor's TOP side
+          if (belowRP) {
+            score += compareSideFast(sR[rm[1]], sG[rm[1]], sB[rm[1]], belowRP.tR, belowRP.tG, belowRP.tB);
+            score += compareFullFast(fR, fG, fB, belowRP.fR, belowRP.fG, belowRP.fB);
+          }
+
           if (score > bestScore) {
             bestScore = score;
             bestTile = tile;
-            bestRotation = rot;
+            bestRotation = r;
           }
         }
       }
@@ -265,92 +332,39 @@ async function fillMapWithTiles(voidMap, biomeMap, tileMap, biomePools, onProgre
 
       filled++;
       if (filled % 2000 === 0) {
-        onProgress?.(0.40 + 0.50 * (filled / total), "Placing tiles...");
+        onProgress?.(0.60 + 0.35 * (filled / total), "Placing tiles...");
         await yieldFrame();
       }
     }
   }
 }
 
-function calculateTileScore(x, y, tile, rotation, biomeMap, tileMap) {
-  let score = 0;
-
-  // Biome match: +50
-  if (tile.biome === biomeMap[x][y]?.name) {
-    score += 50;
-  }
-
-  // Color profile matching with neighbors
-  score += calculateColorProfileMatch(x, y, tile, rotation, tileMap);
-
-  // Adjacency penalty: -15 per identical neighbor
-  if (x > 0 && tileMap[x - 1][y]?.name === tile.name) score -= 15;
-  if (x < MAP_SIZE - 1 && tileMap[x + 1][y]?.name === tile.name) score -= 15;
-  if (y > 0 && tileMap[x][y - 1]?.name === tile.name) score -= 15;
-  if (y < MAP_SIZE - 1 && tileMap[x][y + 1]?.name === tile.name) score -= 15;
-
-  // Randomness
-  score += Math.random() * 16;
-
-  return score;
-}
-
-function getRotatedProfile(tile, rotation) {
-  const top = { r: tile.colorProfile_top_r, g: tile.colorProfile_top_g, b: tile.colorProfile_top_b };
-  const bottom = { r: tile.colorProfile_bottom_r, g: tile.colorProfile_bottom_g, b: tile.colorProfile_bottom_b };
-  const left = { r: tile.colorProfile_left_r, g: tile.colorProfile_left_g, b: tile.colorProfile_left_b };
-  const right = { r: tile.colorProfile_right_r, g: tile.colorProfile_right_g, b: tile.colorProfile_right_b };
-  const full = { r: tile.colorProfile_full_r, g: tile.colorProfile_full_g, b: tile.colorProfile_full_b };
-
-  // Rotate clockwise: top->right, right->bottom, bottom->left, left->top
-  const sides = [top, right, bottom, left];
-  const rotIdx = rotation % 4;
+// Extract rotated side values for a placed tile (applying its rotation)
+function getRotatedSides(tile) {
+  const rot = ((tile.rotation || 0) / 90) % 4;
+  const tR = [tile.colorProfile_top_r, tile.colorProfile_bottom_r, tile.colorProfile_left_r, tile.colorProfile_right_r];
+  const tG = [tile.colorProfile_top_g, tile.colorProfile_bottom_g, tile.colorProfile_left_g, tile.colorProfile_right_g];
+  const tB = [tile.colorProfile_top_b, tile.colorProfile_bottom_b, tile.colorProfile_left_b, tile.colorProfile_right_b];
+  const rm = ROT_MAP[rot];
   return {
-    top: sides[(4 - rotIdx) % 4],
-    right: sides[(5 - rotIdx) % 4],
-    bottom: sides[(6 - rotIdx) % 4],
-    left: sides[(7 - rotIdx) % 4],
-    full,
+    tR: tR[rm[0]], tG: tG[rm[0]], tB: tB[rm[0]], // top
+    bR: tR[rm[1]], bG: tG[rm[1]], bB: tB[rm[1]], // bottom
+    lR: tR[rm[2]], lG: tG[rm[2]], lB: tB[rm[2]], // left
+    rR: tR[rm[3]], rG: tG[rm[3]], rB: tB[rm[3]], // right
+    fR: tile.colorProfile_full_r, fG: tile.colorProfile_full_g, fB: tile.colorProfile_full_b,
   };
 }
 
-function colorDistance(c1, c2) {
-  const dr = c1.r - c2.r;
-  const dg = c1.g - c2.g;
-  const db = c1.b - c2.b;
-  return Math.sqrt(dr * dr + dg * dg + db * db);
+// Squared distance / 195075 — matches Java's compareSideProfilesFast
+function compareSideFast(r1, g1, b1, r2, g2, b2) {
+  const dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
+  return 50 - (dr * dr + dg * dg + db * db) / 195075 * 50;
 }
 
-function calculateColorProfileMatch(x, y, tile, rotation, tileMap) {
-  const profile = getRotatedProfile(tile, rotation);
-  let score = 0;
-
-  const neighbors = [
-    { dx: -1, dy: 0, mySide: "left", theirSide: "right" },
-    { dx: 1, dy: 0, mySide: "right", theirSide: "left" },
-    { dx: 0, dy: -1, mySide: "bottom", theirSide: "top" },
-    { dx: 0, dy: 1, mySide: "top", theirSide: "bottom" },
-  ];
-
-  for (const n of neighbors) {
-    const nx = x + n.dx;
-    const ny = y + n.dy;
-    if (nx < 0 || nx >= MAP_SIZE || ny < 0 || ny >= MAP_SIZE) continue;
-    const neighbor = tileMap[nx][ny];
-    if (!neighbor) continue;
-
-    const neighborProfile = getRotatedProfile(neighbor, (neighbor.rotation || 0) / 90);
-
-    // Side profile: 0-50 points
-    const sideDist = colorDistance(profile[n.mySide], neighborProfile[n.theirSide]);
-    score += 50 - (sideDist / 255) * 50;
-
-    // Full profile: 0-30 points
-    const fullDist = colorDistance(profile.full, neighborProfile.full);
-    score += 30 - (fullDist / 255) * 30;
-  }
-
-  return score;
+// Squared distance / 195075 — matches Java's compareFullProfilesFast
+function compareFullFast(r1, g1, b1, r2, g2, b2) {
+  const dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
+  return 30 - (dr * dr + dg * dg + db * db) / 195075 * 30;
 }
 
 function spawnMonsters(voidMap, tileMap) {
@@ -401,11 +415,8 @@ export function findSpawnPoint(voidMap) {
     }
     if (allWalkable) return { x, y };
   }
-  // Fallback: find any walkable tile
   for (let x = 1; x < MAP_SIZE - 1; x++)
     for (let y = 1; y < MAP_SIZE - 1; y++)
       if (voidMap[x][y]) return { x, y };
   return { x: MAP_SIZE / 2, y: MAP_SIZE / 2 };
 }
-
-export { MAP_SIZE };
